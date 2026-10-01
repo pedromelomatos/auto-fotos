@@ -1,0 +1,36 @@
+# Segredos e configuracao local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Ambientes e caches Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Saidas geradas
+*.csv
+relatorios/
+reports/
+*.log
+
+# Arquivos de editor/SO
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Copia local de outro repositorio
+/auto-fotos/
