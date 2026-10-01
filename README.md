@@ -5,6 +5,8 @@ associá-las aos SKUs de produtos e cadastrar os links que faltam no Bling.
 Você escolhe a pasta, revisa a comparação e confirma o envio de um produto
 por vez. Disponível por interface gráfica no Windows e por linha de comando.
 
+![Interface do Auto Fotos com seleção de fabricante, verificação de imagens e tabela de resultados](docs/images/interface-auto-fotos.png)
+
 ## Funcionalidades
 
 - Seleção de fabricantes e navegação por vários níveis de subpastas.
