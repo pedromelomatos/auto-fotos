@@ -1,4 +1,4 @@
-# Auto Fotos — Integração de Imagens com o Bling
+# Integração de Imagens com o Bling
 
 Automação com supervisão humana para localizar imagens em um servidor HTTP,
 associá-las aos SKUs de produtos e cadastrar os links que faltam no Bling.
