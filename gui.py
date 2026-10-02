@@ -6,7 +6,7 @@ import os
 import queue
 import threading
 import tkinter as tk
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -14,6 +14,7 @@ from typing import Any, Callable
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
+from PIL import Image, ImageTk
 
 from bling import BlingImagens, BlingSomenteLeitura
 from main import (
@@ -34,6 +35,7 @@ from oauth_bling import (
     tokens_configurados,
 )
 from servidor import ResultadoColeta, coletar_imagens, gerar_csv, listar_diretorios
+from previa import carregar_previa
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +136,8 @@ class AutoFotosGUI:
     def __init__(self, raiz: tk.Tk) -> None:
         self.raiz = raiz
         self.raiz.title("Auto Fotos - Bling")
-        self.raiz.geometry("1180x780")
-        self.raiz.minsize(940, 650)
+        self.raiz.geometry("1280x860")
+        self.raiz.minsize(1040, 800)
 
         load_dotenv(override=True)
         url_inicial = os.getenv("IMAGENS_BASE_URL", URL_PADRAO)
@@ -165,6 +167,18 @@ class AutoFotosGUI:
         self.fila: queue.Queue[tuple[str, str, Any]] = queue.Queue()
         self.em_execucao = False
         self.ao_concluir: Callable[[Any], None] | None = None
+        self._previa_geracao = 0
+        self._previa_produto: tuple[str, bool] | None = None
+        self._previa_linhas: list[dict[str, str | int]] = []
+        self._previa_imagens: dict[str, Image.Image | None] = {}
+        self._previa_cache: OrderedDict[tuple[str, bool], Image.Image] = OrderedDict()
+        self._previa_indice = 0
+        self._previa_botoes: list[ttk.Button] = []
+        self._previa_fotos_tk: list[ImageTk.PhotoImage] = []
+        self._previa_foto_tk: ImageTk.PhotoImage | None = None
+        self._previa_pedidos: queue.Queue[Any] = queue.Queue()
+        self._previa_worker: threading.Thread | None = None
+        self._previa_encerrada = threading.Event()
 
         self._montar_interface()
         self.raiz.protocol("WM_DELETE_WINDOW", self._fechar)
@@ -425,31 +439,39 @@ class AutoFotosGUI:
         metricas.grid(row=2, column=0, sticky="ew")
         for coluna in range(4):
             metricas.columnconfigure(coluna, weight=1, uniform="metricas")
-        for coluna, (titulo, variavel) in enumerate(
+        for coluna, (titulo, variavel, fundo, cor) in enumerate(
             (
-                ("Novas", self.total_novas),
-                ("Já cadastradas", self.total_existentes),
-                ("Não encontradas", self.total_ignoradas),
-                ("Precisam de atenção", self.total_problemas),
+                ("Novas", self.total_novas, "#e8f5ee", "#187347"),
+                ("Já cadastradas", self.total_existentes, "#eaf2fc", "#275da8"),
+                ("Não encontradas", self.total_ignoradas, "#fff6df", "#946200"),
+                ("Precisam de atenção", self.total_problemas, "#fcecee", "#ad3448"),
             )
         ):
-            caixa = ttk.LabelFrame(metricas, padding=(12, 7))
+            caixa = tk.Frame(metricas, background=fundo, padx=12, pady=9)
             caixa.grid(
                 row=0,
                 column=coluna,
                 sticky="ew",
                 padx=(0 if coluna == 0 else 4, 0 if coluna == 3 else 4),
             )
-            ttk.Label(caixa, textvariable=variavel, style="Metrica.TLabel").pack()
-            ttk.Label(caixa, text=titulo, style="MetricaNome.TLabel").pack()
+            tk.Label(caixa, textvariable=variavel, background=fundo,
+                     foreground=cor, font=("Segoe UI", 20, "bold")).pack()
+            tk.Label(caixa, text=titulo, background=fundo,
+                     foreground=cor, font=("Segoe UI", 10)).pack()
+
+        revisao = ttk.Panedwindow(principal, orient="horizontal")
+        revisao.grid(row=3, column=0, sticky="nsew")
 
         quadro_tabela = ttk.LabelFrame(
-            principal,
+            revisao,
             text="2. Revise o resultado",
             padding=8,
             style="Etapa.TLabelframe",
+            width=800,
+            height=320,
         )
-        quadro_tabela.grid(row=3, column=0, sticky="nsew")
+        quadro_tabela.grid_propagate(False)
+        revisao.add(quadro_tabela, weight=1)
         quadro_tabela.rowconfigure(1, weight=1)
         quadro_tabela.columnconfigure(0, weight=1)
 
@@ -527,6 +549,7 @@ class AutoFotosGUI:
         self.tabela.grid(row=1, column=0, sticky="nsew")
         rolagem_vertical.grid(row=1, column=1, sticky="ns")
         rolagem_horizontal.grid(row=2, column=0, sticky="ew")
+        self._montar_previa(revisao)
 
         rodape = ttk.Frame(principal, padding=(0, 10, 0, 0))
         rodape.grid(row=4, column=0, sticky="ew")
@@ -554,6 +577,189 @@ class AutoFotosGUI:
         )
         self.progresso.grid(row=0, column=1, padx=(10, 0))
 
+    def _montar_previa(self, revisao: ttk.Panedwindow) -> None:
+        quadro = ttk.LabelFrame(revisao, text="Fotos do produto", padding=10,
+                                style="Etapa.TLabelframe", width=330, height=320)
+        # As colunas da tabela não devem comprimir a foto ao redimensionar.
+        quadro.grid_propagate(False)
+        revisao.add(quadro, weight=0)
+        quadro.columnconfigure(0, weight=1)
+        quadro.rowconfigure(1, weight=1)
+        self.previa_titulo = ttk.Label(quadro, text="Confira antes de enviar",
+                                      font=("Segoe UI", 10, "bold"), wraplength=270)
+        self.previa_titulo.grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.previa_canvas = tk.Canvas(quadro, background="#ffffff", height=160,
+                                      width=270, highlightthickness=0)
+        self.previa_canvas.grid(row=1, column=0, sticky="nsew")
+        self.previa_canvas.bind("<Configure>", lambda evento: self._desenhar_previa())
+        quadro.bind("<Configure>", lambda evento: self._ajustar_textos_previa(evento.width))
+        self.previa_status = tk.Label(quadro, text="", font=("Segoe UI", 9, "bold"),
+                                      padx=8, pady=3)
+        self.previa_status.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.previa_arquivo = ttk.Label(quadro, text="", wraplength=270,
+                                       style="Subtitulo.TLabel")
+        self.previa_arquivo.grid(row=3, column=0, sticky="w", pady=(4, 6))
+        self.miniaturas_canvas = tk.Canvas(quadro, height=72, width=270,
+                                          highlightthickness=0)
+        self.miniaturas_canvas.grid(row=4, column=0, sticky="ew")
+        self.miniaturas_quadro = ttk.Frame(self.miniaturas_canvas)
+        self.miniaturas_canvas.create_window(0, 0, window=self.miniaturas_quadro,
+                                            anchor="nw")
+        self.miniaturas_quadro.bind("<Configure>", lambda evento:
+            self.miniaturas_canvas.configure(scrollregion=self.miniaturas_canvas.bbox("all")))
+        rolagem = ttk.Scrollbar(quadro, orient="horizontal",
+                               command=self.miniaturas_canvas.xview)
+        rolagem.grid(row=5, column=0, sticky="ew")
+        self.miniaturas_canvas.configure(xscrollcommand=rolagem.set)
+        self._limpar_previa()
+
+    def _ajustar_textos_previa(self, largura: int) -> None:
+        self.previa_titulo.configure(wraplength=max(80, largura - 28))
+        self.previa_arquivo.configure(wraplength=max(80, largura - 28))
+
+    def _limpar_previa(self) -> None:
+        self._previa_geracao += 1
+        self._previa_produto = None
+        self._previa_linhas = []
+        self._previa_indice = 0
+        self._previa_imagens.clear()
+        self._previa_foto_tk = None
+        self._previa_fotos_tk.clear()
+        self._previa_botoes.clear()
+        for widget in self.miniaturas_quadro.winfo_children():
+            widget.destroy()
+        self.miniaturas_canvas.xview_moveto(0)
+        self.previa_titulo.configure(text="Confira antes de enviar")
+        self.previa_status.configure(text="", background=self.raiz.cget("background"))
+        self.previa_arquivo.configure(text="Selecione um produto na tabela.")
+        self._desenhar_previa()
+
+    def _desenhar_previa(self) -> None:
+        canvas = self.previa_canvas
+        canvas.delete("all")
+        largura = canvas.winfo_width() if canvas.winfo_width() > 1 else 270
+        altura = canvas.winfo_height() if canvas.winfo_height() > 1 else 160
+        if not self._previa_linhas:
+            x, y = largura / 2, altura / 2 - 18
+            canvas.create_rectangle(x-32, y-24, x+28, y+18, outline="#d1dbe5", width=2)
+            canvas.create_rectangle(x-26, y-18, x+34, y+24, fill="#f0f5fa",
+                                    outline="#aabccc", width=2)
+            canvas.create_oval(x+13, y-10, x+22, y-1, fill="#aabccc", outline="")
+            canvas.create_line(x-20, y+16, x-5, y, x+5, y+10, x+14, y+2, x+28, y+16,
+                               fill="#aabccc", width=2)
+            canvas.create_text(x, y+52, text="As fotos aparecem aqui", fill="#64748b",
+                               font=("Segoe UI", 10))
+            return
+        url = str(self._previa_linhas[self._previa_indice].get("url_servidor", ""))
+        imagem = self._previa_imagens.get(url)
+        if imagem is None:
+            texto = ("Prévia indisponível\nNão foi possível carregar esta foto."
+                     if url in self._previa_imagens else "Carregando foto…")
+            canvas.create_text(largura/2, altura/2, text=texto, justify="center",
+                               width=largura-24, fill="#64748b", font=("Segoe UI", 10))
+            self._previa_foto_tk = None
+            return
+        reduzida = imagem.copy()
+        reduzida.thumbnail((max(1, largura-16), max(1, altura-16)), Image.Resampling.LANCZOS)
+        self._previa_foto_tk = ImageTk.PhotoImage(reduzida, master=self.raiz)
+        canvas.create_image(largura/2, altura/2, image=self._previa_foto_tk)
+
+    def _exibir_foto(self, indice: int) -> None:
+        self._previa_indice = indice
+        linha = self._previa_linhas[indice]
+        status = str(linha["status_planejado"])
+        fundo, cor = {
+            "ADICIONAR": ("#e8f5ee", "#187347"),
+            "JA_EXISTE": ("#eaf2fc", "#275da8"),
+            "IGNORADO_PRODUTO_NAO_ENCONTRADO": ("#fff6df", "#946200"),
+        }.get(status, ("#fcecee", "#ad3448"))
+        self.previa_status.configure(text=self.ROTULOS_STATUS.get(status, "Revisar"),
+                                     background=fundo, foreground=cor)
+        arquivo = unquote(urlsplit(str(linha.get("url_servidor", ""))).path.rsplit("/", 1)[-1])
+        self.previa_arquivo.configure(text=f"Foto {indice+1} de {len(self._previa_linhas)} · {arquivo}")
+        for numero, botao in enumerate(self._previa_botoes):
+            botao.state(["pressed"] if numero == indice else ["!pressed"])
+        self._desenhar_previa()
+
+    def _mostrar_previa_selecionada(self) -> None:
+        linha = self._linha_selecionada()
+        if linha is None or self.estado is None:
+            self._limpar_previa()
+            return
+        verificar = self.validar_certificado.get()
+        produto = (str(linha.get("codigo_servidor", "")), verificar)
+        if produto != self._previa_produto:
+            self._limpar_previa()
+            self._previa_produto = produto
+            self._previa_linhas = [item for item in self.estado.linhas
+                                  if str(item.get("codigo_servidor", "")) == produto[0]]
+            self.previa_titulo.configure(text=f"{linha.get('nome_bling') or 'Produto'}\nSKU {linha.get('codigo_bling', '')}")
+            for indice, item in enumerate(self._previa_linhas):
+                status = str(item["status_planejado"])
+                rotulo = {"ADICIONAR": "Nova", "JA_EXISTE": "Cadastrada"}.get(status, "Revisar")
+                botao = ttk.Button(self.miniaturas_quadro,
+                    text=f"{item.get('posicao', indice+1)} · {rotulo}", compound="top",
+                    width=11, command=lambda numero=indice: self._exibir_foto(numero))
+                botao.pack(side="left", padx=(0, 5), pady=2)
+                self._previa_botoes.append(botao)
+            urls = list(dict.fromkeys(str(item.get("url_servidor", ""))
+                                     for item in [linha, *self._previa_linhas]))
+            pendentes = []
+            for url in urls:
+                chave = (url, verificar)
+                if chave in self._previa_cache:
+                    self._previa_cache.move_to_end(chave)
+                    self._receber_previa((self._previa_geracao, url, verificar,
+                                         self._previa_cache[chave]))
+                elif url:
+                    pendentes.append(url)
+                else:
+                    self._previa_imagens[url] = None
+            if pendentes:
+                if self._previa_worker is None:
+                    self._previa_worker = threading.Thread(target=self._carregar_fotos, daemon=True)
+                    self._previa_worker.start()
+                self._previa_pedidos.put((self._previa_geracao, pendentes, verificar))
+        indice = self._previa_linhas.index(linha)
+        self._exibir_foto(indice)
+
+    def _carregar_fotos(self) -> None:
+        """Um único worker; ignora pedidos antigos ao trocar de produto."""
+        while not self._previa_encerrada.is_set():
+            pedido = self._previa_pedidos.get()
+            if pedido is None:
+                return
+            geracao, urls, verificar = pedido
+            for url in urls:
+                if geracao != self._previa_geracao or self._previa_encerrada.is_set():
+                    break
+                try:
+                    imagem = carregar_previa(url, verificar)
+                except Exception:
+                    imagem = None
+                self.fila.put(("previa", "", (geracao, url, verificar, imagem)))
+
+    def _receber_previa(self, resultado: Any) -> None:
+        geracao, url, verificar, imagem = resultado
+        if geracao != self._previa_geracao:
+            return
+        self._previa_imagens[url] = imagem
+        if imagem is not None:
+            chave = (url, verificar)
+            self._previa_cache[chave] = imagem
+            self._previa_cache.move_to_end(chave)
+            while len(self._previa_cache) > 64:
+                self._previa_cache.popitem(last=False)
+            miniatura = imagem.copy()
+            miniatura.thumbnail((52, 48), Image.Resampling.LANCZOS)
+            foto = ImageTk.PhotoImage(miniatura, master=self.raiz)
+            self._previa_fotos_tk.append(foto)
+            for indice, linha in enumerate(self._previa_linhas):
+                if linha.get("url_servidor") == url:
+                    self._previa_botoes[indice].configure(image=foto)
+        if self._previa_linhas:
+            self._desenhar_previa()
+
     def _alternar_configuracoes(self) -> None:
         self.avancadas_visiveis = not self.avancadas_visiveis
         if self.avancadas_visiveis:
@@ -578,6 +784,8 @@ class AutoFotosGUI:
                 "Aguarde a operação terminar antes de fechar a janela.",
             )
             return
+        self._previa_encerrada.set()
+        self._previa_pedidos.put(None)
         self.raiz.destroy()
 
     def _abrir_pasta(self) -> None:
@@ -693,6 +901,7 @@ class AutoFotosGUI:
             self._carregar_subpastas(nova_url)
 
     def _invalidar_plano_por_troca(self, selecionada: str) -> None:
+        self._limpar_previa()
         self.estado = None
         self.linhas_por_item.clear()
         for item in self.tabela.get_children():
@@ -763,6 +972,11 @@ class AutoFotosGUI:
             tipo, descricao, payload = self.fila.get_nowait()
         except queue.Empty:
             self.raiz.after(100, self._processar_fila)
+            return
+
+        if tipo == "previa":
+            self._receber_previa(payload)
+            self.raiz.after(10, self._processar_fila)
             return
 
         self._definir_ocupado(False)
@@ -846,6 +1060,7 @@ class AutoFotosGUI:
         self._preencher_tabela()
 
     def _preencher_tabela(self) -> None:
+        self._limpar_previa()
         self.linhas_por_item.clear()
         for item in self.tabela.get_children():
             self.tabela.delete(item)
@@ -896,6 +1111,7 @@ class AutoFotosGUI:
 
     def _ao_selecionar(self, _evento: object | None = None) -> None:
         self._atualizar_botao_aplicar()
+        self._mostrar_previa_selecionada()
 
     def _atualizar_botao_aplicar(self) -> None:
         linha = self._linha_selecionada()

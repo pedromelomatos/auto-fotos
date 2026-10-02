@@ -1,10 +1,13 @@
 import unittest
 import tkinter as tk
 import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
+from PIL import Image
 
 from gui import (
     AutoFotosGUI,
+    EstadoSimulacao,
     linha_pode_ser_aplicada,
     mensagem_erro_amigavel,
     pasta_e_raiz_da_url,
@@ -214,6 +217,112 @@ class NavegacaoPastasTests(unittest.TestCase):
             self.escolher(0, 0)
             self.interface.simular()
             self.assertEqual(coletar.call_args.args[0], self.fabricante)
+
+
+class PreviaFotosTests(unittest.TestCase):
+    def setUp(self):
+        self.raiz = tk.Tk()
+        self.raiz.withdraw()
+        self.addCleanup(self.raiz.destroy)
+        inicializar = patch.object(AutoFotosGUI, "_inicializar")
+        inicializar.start()
+        self.addCleanup(inicializar.stop)
+        with patch("gui.load_dotenv"):
+            self.interface = AutoFotosGUI(self.raiz)
+        self.addCleanup(self.interface._previa_pedidos.put, None)
+        self.addCleanup(self.interface._previa_encerrada.set)
+        self.linhas = [
+            dict(codigo_servidor="PR1", codigo_bling="PR10001", nome_bling="Produto A",
+                 posicao="01", url_servidor="https://exemplo.test/a.jpg", status_planejado="ADICIONAR"),
+            dict(codigo_servidor="PR1", codigo_bling="PR10001", nome_bling="Produto A",
+                 posicao="02", url_servidor="https://exemplo.test/b.jpg", status_planejado="JA_EXISTE"),
+            dict(codigo_servidor="PR2", codigo_bling="PR20001", nome_bling="Produto B",
+                 posicao="01", url_servidor="https://exemplo.test/c.jpg", status_planejado="ADICIONAR"),
+        ]
+        for linha in self.linhas:
+            self.interface._previa_cache[(linha["url_servidor"], False)] = Image.new("RGB", (80, 60))
+        estado = EstadoSimulacao(ResultadoColeta((), 0, ()), {}, self.linhas, Path("."))
+        self.interface._mostrar_simulacao(estado)
+
+    def selecionar(self, item):
+        self.interface.tabela.selection_set(item)
+        self.interface._ao_selecionar()
+
+    def test_agrupar_fotos_e_mudar_miniatura_nao_muda_produto_para_envio(self):
+        self.selecionar("linha-0")
+        self.assertEqual(len(self.interface._previa_botoes), 2)
+        self.assertEqual(self.interface.previa_status.cget("text"), "Nova imagem")
+        self.interface._previa_botoes[1].invoke()
+        self.assertEqual(self.interface.previa_status.cget("text"), "Já cadastrada")
+        self.assertEqual(self.interface.tabela.selection(), ("linha-0",))
+        self.assertEqual(str(self.interface.botao_aplicar["state"]), "normal")
+
+    def test_trocar_produto_apos_ver_segunda_foto_e_seguro(self):
+        self.selecionar("linha-0")
+        self.interface._exibir_foto(1)
+        self.selecionar("linha-2")
+        self.assertEqual(len(self.interface._previa_linhas), 1)
+        self.assertIn("Produto B", self.interface.previa_titulo.cget("text"))
+
+    def test_resposta_antiga_nao_substitui_produto_atual(self):
+        self.selecionar("linha-0")
+        geracao = self.interface._previa_geracao
+        self.selecionar("linha-2")
+        self.interface._receber_previa((geracao, "https://exemplo.test/a.jpg", False, None))
+        self.assertNotIn("https://exemplo.test/a.jpg", self.interface._previa_imagens)
+
+    def test_falha_previa_nao_desbloqueia_operacao_em_andamento(self):
+        self.selecionar("linha-0")
+        self.interface._definir_ocupado(True, "Enviando imagens…")
+        self.interface.fila.put(("previa", "", (self.interface._previa_geracao,
+            self.linhas[0]["url_servidor"], False, None)))
+        self.interface._processar_fila()
+        self.assertTrue(self.interface.em_execucao)
+        self.assertEqual(str(self.interface.botao_aplicar["state"]), "disabled")
+        textos = [self.interface.previa_canvas.itemcget(item, "text")
+                  for item in self.interface.previa_canvas.find_all()]
+        self.assertTrue(any("indisponível" in texto for texto in textos))
+
+    def test_trocar_pasta_limpa_fotos_e_invalida_pedidos(self):
+        self.selecionar("linha-0")
+        geracao = self.interface._previa_geracao
+        self.interface._invalidar_plano_por_troca("OUTRA")
+        self.assertGreater(self.interface._previa_geracao, geracao)
+        self.assertEqual(self.interface._previa_linhas, [])
+        self.assertEqual(self.interface._previa_botoes, [])
+
+    def test_filtro_mantem_todas_fotos_do_produto_para_conferencia(self):
+        self.interface.filtro_status.set("Somente novas")
+        self.interface._ao_filtrar()
+        self.selecionar("linha-0")
+        self.assertEqual(len(self.interface._previa_linhas), 2)
+
+    def test_carrega_em_segundo_plano_e_aproveita_cache_ao_voltar(self):
+        self.interface._previa_cache.clear()
+        foto = Image.new("RGB", (120, 90), "blue")
+        with patch("gui.carregar_previa", return_value=foto) as carregar:
+            self.selecionar("linha-0")
+            for _ in range(2):
+                tipo, _, resultado = self.interface.fila.get(timeout=2)
+                self.assertEqual(tipo, "previa")
+                self.interface._receber_previa(resultado)
+            self.interface._limpar_previa()
+            self.selecionar("linha-0")
+            self.assertEqual(carregar.call_count, 2)
+            self.assertIsNotNone(self.interface._previa_foto_tk)
+
+    def test_worker_abandona_restante_do_produto_ao_trocar_selecao(self):
+        self.interface._previa_pedidos.put((self.interface._previa_geracao,
+            ["https://exemplo.test/a.jpg", "https://exemplo.test/b.jpg"], False))
+        self.interface._previa_pedidos.put(None)
+
+        def trocar_selecao(*args):
+            self.interface._previa_geracao += 1
+            return Image.new("RGB", (80, 60))
+
+        with patch("gui.carregar_previa", side_effect=trocar_selecao) as carregar:
+            self.interface._carregar_fotos()
+        self.assertEqual(carregar.call_count, 1)
 
 
 if __name__ == "__main__":

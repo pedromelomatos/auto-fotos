@@ -5,7 +5,7 @@ associá-las aos SKUs de produtos e cadastrar os links que faltam no Bling.
 Você escolhe a pasta, revisa a comparação e confirma o envio de um produto
 por vez. Disponível por interface gráfica no Windows e por linha de comando.
 
-![Interface do Auto Fotos com seleção de fabricante, verificação de imagens e tabela de resultados](docs/images/interface-auto-fotos.png)
+![Interface do Auto Fotos com cards coloridos, resultados e prévia das fotos — dados ilustrativos](docs/images/interface-auto-fotos-previa.png)
 
 ## Funcionalidades
 
@@ -16,6 +16,7 @@ por vez. Disponível por interface gráfica no Windows e por linha de comando.
 - Identificação de posições repetidas e lacunas na sequência de imagens.
 - Comparação com produtos ativos do Bling e identificação de imagens existentes.
 - Simulação e relatórios CSV para conferir o resultado antes do envio.
+- Cards coloridos por status e prévia das fotos do produto com miniaturas clicáveis.
 - Envio das imagens novas de um SKU, preservando os links existentes e
   consultando o produto novamente para conferir a atualização.
 - Autorização OAuth local e renovação automática do token na GUI.
@@ -111,6 +112,18 @@ produtos não encontrados e linhas com problemas não habilitam o botão de envi
 Filtros ajudam a revisar esses resultados. Pasta dos relatórios, validação TLS
 e controles de autorização ficam em `Configurações avançadas`.
 
+Ao selecionar uma linha, o painel à direita mostra as fotos da origem para aquele
+produto, com etiquetas de status. Clique nas miniaturas para conferir cada foto;
+a seleção do produto para envio continua sendo feita pela tabela. Arraste a
+divisória entre a tabela e o painel para ajustar o espaço. As fotos carregam em
+segundo plano e uma falha na prévia não impede a conferência ou o envio.
+
+Se já tinha o programa instalado, atualize as dependências para habilitar a prévia:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
 ## Usar a linha de comando
 
 Coletar imagens da pasta configurada no `.env`:
@@ -186,6 +199,7 @@ auto-fotos/
 ├── gui.py                      # interface Tkinter
 ├── main.py                     # CLI, simulação e relatórios
 ├── oauth_bling.py              # autorização e renovação OAuth
+├── previa.py                   # download e redução de fotos para a GUI
 ├── requirements.txt            # dependências Python
 └── servidor.py                 # leitura e classificação das imagens
 ```
