@@ -167,9 +167,12 @@ Consulte todas as opções com `main.py --help`.
 
 ## Regras de associação e limites
 
-Os arquivos devem começar com `PR` ou `RE` seguido de números e terminar com
+Os arquivos devem começar com `PR`, `RE` ou `MLB` seguido de números e terminar com
 uma posição, por exemplo `PR8254-PRODUTO_01.jpg`. O código `PR8254` corresponde
 ao SKU `PR82540001`, acrescentando o sufixo `0001`.
+
+Os códigos `MLB` já representam o SKU completo e não recebem sufixo:
+`MLB5031544400-PRODUTO_01.jpg` corresponde ao SKU `MLB5031544400`.
 
 A exceção `PR31597` → `RE315970001` está em `SUBSTITUICOES_CODIGO_BLING`,
 no arquivo `servidor.py`. Essas regras refletem o catálogo de origem e devem

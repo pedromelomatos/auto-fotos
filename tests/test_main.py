@@ -2,13 +2,13 @@ import argparse
 import unittest
 from unittest.mock import Mock
 
-from bling import ProdutoBling
+from bling import BlingImagens, ProdutoBling
 from main import (
     aplicar_imagens_piloto,
     criar_plano_imagens,
     validar_configuracao_escrita,
 )
-from servidor import ImagemProduto, ProdutoImagens, ResultadoColeta
+from servidor import ImagemProduto, ProdutoImagens, ResultadoColeta, coletar_imagens
 
 
 def produto_com_imagem(codigo_servidor: str, codigo_bling: str) -> ProdutoImagens:
@@ -148,6 +148,72 @@ class AplicacaoImagensTests(unittest.TestCase):
         )
 
         self.assertEqual(aplicacao.status, "ERRO_VERIFICACAO_POS_PATCH")
+
+
+class IntegracaoMlbTests(unittest.TestCase):
+    def test_coleta_consulta_planeja_e_aplica_sku_mlb_sem_sufixo(self):
+        sessao_servidor = Mock()
+        sessao_servidor.get.return_value.text = """
+        <a href="MLB5031544400-PRODUTO_02.jpg">MLB 2</a>
+        <a href="PR8254-PRODUTO_01.jpg">PR</a>
+        <a href="MLB5031544400-PRODUTO_01.jpg">MLB 1</a>
+        <a href="RE1234-PRODUTO_01.jpg">RE</a>
+        """
+        resultado = coletar_imagens(
+            "https://exemplo.test/",
+            verificar_certificado=True,
+            sessao=sessao_servidor,
+        )
+        self.assertEqual(
+            [produto.codigo_bling for produto in resultado.produtos],
+            ["MLB5031544400", "PR82540001", "RE12340001"],
+        )
+        self.assertEqual(resultado.arquivos_imagem_ignorados, ())
+        produto_mlb = resultado.produtos[0]
+        self.assertEqual([imagem.posicao for imagem in produto_mlb.imagens], [1, 2])
+        existente = "https://exemplo.test/existente.jpg"
+        finais = [existente, *(imagem.url for imagem in produto_mlb.imagens)]
+        resumo = dict(id=123, codigo="MLB5031544400", nome="Produto MLB", situacao="A")
+        detalhe_antes = {
+            **resumo,
+            "midia": {"imagens": {"externas": [{"link": existente}]}},
+        }
+        detalhe_depois = {
+            **resumo,
+            "midia": {"imagens": {"externas": [{"link": url} for url in finais]}},
+        }
+        cliente = BlingImagens("token-de-teste", intervalo_minimo=0)
+        cliente._sessao.get = Mock(side_effect=[
+            Mock(status_code=200, ok=True, json=Mock(return_value={"data": dados}))
+            for dados in ([resumo], detalhe_antes, detalhe_antes, detalhe_depois)
+        ])
+        cliente._sessao.patch = Mock(return_value=Mock(
+            status_code=200, ok=True, content=b"{}", json=Mock(return_value={}),
+        ))
+
+        encontrados = cliente.buscar_produtos_por_codigos(
+            produto.codigo_bling for produto in resultado.produtos
+        )
+        parametros = cliente._sessao.get.call_args.kwargs["params"]
+        self.assertIn(("codigos[]", "MLB5031544400"), parametros)
+        self.assertNotIn(("codigos[]", "MLB50315444000001"), parametros)
+        plano = criar_plano_imagens(resultado, encontrados, cliente)
+        self.assertEqual(
+            [linha["status_planejado"] for linha in plano],
+            ["ADICIONAR", "ADICIONAR", "IGNORADO_PRODUTO_NAO_ENCONTRADO",
+             "IGNORADO_PRODUTO_NAO_ENCONTRADO"],
+        )
+
+        aplicacao = aplicar_imagens_piloto(resultado, encontrados, cliente, "MLB5031544400")
+
+        self.assertEqual(aplicacao.status, "APLICADO_E_VERIFICADO")
+        self.assertEqual(aplicacao.codigo_bling, "MLB5031544400")
+        self.assertEqual(aplicacao.quantidade_novas, 2)
+        cliente._sessao.patch.assert_called_once_with(
+            "https://api.bling.com.br/Api/v3/produtos/123",
+            json={"midia": {"imagens": {"imagensURL": [{"link": url} for url in finais]}}},
+            timeout=30.0,
+        )
 
 
 class TravasEscritaTests(unittest.TestCase):

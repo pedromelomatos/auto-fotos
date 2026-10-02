@@ -19,12 +19,40 @@ class CodigoBlingTests(unittest.TestCase):
     def test_aplica_excecao_de_prefixo(self):
         self.assertEqual(codigo_bling("PR31597"), "RE315970001")
 
+    def test_preserva_sku_mlb_sem_acrescentar_sufixo(self):
+        self.assertEqual(codigo_bling("MLB5031544400"), "MLB5031544400")
+        self.assertEqual(codigo_bling(" mlb5031544400 "), "MLB5031544400")
+
     def test_rejeita_codigo_invalido(self):
-        with self.assertRaises(ValueError):
-            codigo_bling("XX1234")
+        for codigo in ("XX1234", "MLB", "MLB5031544400A", "MLB5031544400-01"):
+            with self.subTest(codigo=codigo), self.assertRaises(ValueError):
+                codigo_bling(codigo)
 
 
 class ParserImagemTests(unittest.TestCase):
+    def test_identifica_sku_mlb_completo_e_posicao(self):
+        for nome in (
+            "MLB5031544400-PRODUTO_01.jpg",
+            "MLB5031544400_01.png",
+            "mlb5031544400-PRODUTO_01.WEBP",
+        ):
+            with self.subTest(nome=nome):
+                imagem = analisar_nome_arquivo(nome, f"https://exemplo.test/{nome}")
+                self.assertIsNotNone(imagem)
+                self.assertEqual(imagem.codigo_servidor, "MLB5031544400")
+                self.assertEqual(imagem.codigo_bling, "MLB5031544400")
+                self.assertEqual(imagem.posicao, 1)
+
+    def test_ignora_nome_mlb_invalido(self):
+        for nome in (
+            "MLB-PRODUTO_01.jpg",
+            "MLB5031544400A-PRODUTO_01.jpg",
+            "MLB5031544400-PRODUTO.jpg",
+            "MLB5031544400-PRODUTO_00.jpg",
+        ):
+            with self.subTest(nome=nome):
+                self.assertIsNone(analisar_nome_arquivo(nome, f"https://exemplo.test/{nome}"))
+
     def test_identifica_produto_e_posicao(self):
         nome = "PR8254-DISCO DIAMANTADO MAKITA GRANITO 105X10X20MM D-44351_01.jpg"
         imagem = analisar_nome_arquivo(nome, f"https://exemplo.test/MAKITA/{nome}")

@@ -30,7 +30,7 @@ SUBSTITUICOES_CODIGO_BLING = {
     "PR31597": "RE315970001",
 }
 PADRAO_NOME_IMAGEM = re.compile(
-    r"^(?P<codigo>(?:PR|RE)\d+)(?=[^A-Z0-9]|$).*_(?P<posicao>\d+)"
+    r"^(?P<codigo>(?:PR|RE|MLB)\d+)(?=[^A-Z0-9]|$).*_(?P<posicao>\d+)"
     r"(?P<extensao>\.(?:jpe?g|png|webp))$",
     re.IGNORECASE,
 )
@@ -112,12 +112,14 @@ class DiretorioImagens:
 
 
 def codigo_bling(codigo_servidor: str) -> str:
-    """Converte o codigo do servidor no SKU do Bling, incluindo excecoes."""
+    """Converte PR/RE com sufixo e preserva SKUs MLB, incluindo excecoes."""
     codigo = codigo_servidor.strip().upper()
-    if not re.fullmatch(r"(?:PR|RE)\d+", codigo):
+    if not re.fullmatch(r"(?:PR|RE|MLB)\d+", codigo):
         raise ValueError(f"Codigo de produto invalido: {codigo_servidor!r}")
     if codigo in SUBSTITUICOES_CODIGO_BLING:
         return SUBSTITUICOES_CODIGO_BLING[codigo]
+    if codigo.startswith("MLB"):
+        return codigo
     return f"{codigo}0001"
 
 
