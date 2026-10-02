@@ -23,6 +23,15 @@ por vez. Disponível por interface gráfica no Windows e por linha de comando.
 
 ## Requisitos
 
+Para usar o pacote `auto-fotos-windows.zip`, basta Windows 64 bits: Python,
+Tkinter e as bibliotecas já estão incluídos no `AutoFotos.exe`. Extraia o ZIP,
+edite o `.env` ao lado do executável e siga o `LEIA-ME.txt` para autorizar o Bling.
+O `.env` reúne as configurações; não é necessário um `.config` separado.
+Os relatórios são salvos por padrão na pasta do executável. Ao atualizar,
+substitua somente o `.exe` e preserve seu `.env`.
+
+Os requisitos abaixo se aplicam à execução pelo código-fonte:
+
 - Python 3.10 ou superior, com Tkinter para a interface gráfica.
 - Windows para a GUI e o inicializador `abrir_gui.cmd`.
 - Servidor HTTP/HTTPS com listagem de diretórios por links HTML.
@@ -213,6 +222,29 @@ auto-fotos/
 Os testes usam dados simulados e não acessam o servidor nem a conta do Bling.
 Os testes de interface precisam de Tkinter e de uma sessão gráfica.
 O workflow do GitHub Actions executa a suíte no Windows com Python 3.10 e 3.14.
+
+## Gerar o executável Windows
+
+Em um ambiente Python no Windows, instale as dependências de compilação e execute:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\.venv\Scripts\python.exe gerar_executavel.py
+```
+
+O resultado fica em `dist/auto-fotos-windows.zip`, contendo `AutoFotos.exe`,
+`.env` com valores de exemplo e `LEIA-ME.txt`. A compilação incorpora somente
+as dependências do programa; as credenciais locais e os relatórios não entram
+no ZIP. Para gerar a versão de 64 bits, use Python de 64 bits.
+
+O executável oferece um diagnóstico local sem acessar o Bling ou o servidor:
+
+```powershell
+.\dist\windows\AutoFotos.exe --diagnostico "$PWD\dist\diagnostico.json"
+```
+
+O JSON verifica a criação da interface, prévia de imagens, certificados TLS
+e localização do `.env` e dos relatórios. Ele não contém credenciais.
 
 ## Publicar no GitHub
 

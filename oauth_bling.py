@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 from dotenv import dotenv_values, load_dotenv, set_key
+from configuracao_local import caminho_env
 
 
 URL_AUTORIZACAO = "https://www.bling.com.br/Api/v3/oauth/authorize"
@@ -102,11 +103,11 @@ def token_precisa_renovacao(
     return expira_em.astimezone(timezone.utc) <= limite
 
 
-def carregar_configuracao(arquivo_env: str | Path = ".env") -> ConfiguracaoOAuth:
-    caminho = Path(arquivo_env).resolve()
+def carregar_configuracao(arquivo_env: str | Path | None = None) -> ConfiguracaoOAuth:
+    caminho = Path(arquivo_env).resolve() if arquivo_env is not None else caminho_env()
     if not caminho.is_file():
         raise ErroOAuthBling(
-            "Arquivo .env nao encontrado. Copie .env.example para .env primeiro."
+            "Arquivo .env nao encontrado. Coloque o .env configurado na pasta do programa."
         )
 
     valores = dotenv_values(caminho)

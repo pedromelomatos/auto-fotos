@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from PIL import Image, ImageTk
 
 from bling import BlingImagens, BlingSomenteLeitura
+from configuracao_local import caminho_env, pasta_aplicacao
 from main import (
     URL_PADRAO,
     ResultadoAplicacao,
@@ -139,14 +140,14 @@ class AutoFotosGUI:
         self.raiz.geometry("1280x860")
         self.raiz.minsize(1040, 800)
 
-        load_dotenv(override=True)
+        load_dotenv(caminho_env(), override=True)
         url_inicial = os.getenv("IMAGENS_BASE_URL", URL_PADRAO)
         pasta_inicial, self.servidor_raiz = pasta_e_raiz_da_url(url_inicial)
         self.url = tk.StringVar(value=url_inicial)
         self.pasta_remota = tk.StringVar(value=pasta_inicial)
         self.urls_por_pasta = {pasta_inicial: url_inicial}
         self.subpastas: list[SeletorSubpasta] = []
-        self.pasta_saida = tk.StringVar(value=str(Path(__file__).resolve().parent))
+        self.pasta_saida = tk.StringVar(value=str(pasta_aplicacao()))
         self.validar_certificado = tk.BooleanVar(
             value=valor_booleano(os.getenv("SERVIDOR_VERIFY_SSL"), padrao=False)
         )
@@ -234,7 +235,7 @@ class AutoFotosGUI:
     def _validar_autorizacao_inicial(self, configuracao: Any) -> None:
         def tarefa() -> Exception | None:
             try:
-                load_dotenv(override=True)
+                load_dotenv(caminho_env(), override=True)
                 BlingSomenteLeitura.do_ambiente().verificar_acesso()
             except Exception as erro:
                 return erro
@@ -1005,7 +1006,7 @@ class AutoFotosGUI:
         validar_certificado = self.validar_certificado.get()
 
         def tarefa() -> EstadoSimulacao:
-            load_dotenv(override=True)
+            load_dotenv(caminho_env(), override=True)
             pasta.mkdir(parents=True, exist_ok=True)
             resultado = coletar_imagens(
                 url,
@@ -1177,7 +1178,7 @@ class AutoFotosGUI:
         estado = self.estado
 
         def tarefa() -> ResultadoAplicacao:
-            load_dotenv(override=True)
+            load_dotenv(caminho_env(), override=True)
             cliente = BlingImagens.do_ambiente()
             encontrados_atualizados = cliente.buscar_produtos_por_codigos([sku])
             aplicacao = aplicar_imagens_piloto(

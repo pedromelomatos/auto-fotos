@@ -1,0 +1,34 @@
+AUTO FOTOS - EXECUTAVEL PARA WINDOWS 64 BITS
+
+1. Extraia todo o ZIP para uma pasta onde voce possa salvar arquivos.
+   Nao abra o programa de dentro do ZIP. Nao precisa instalar Python.
+
+2. Abra .env no Bloco de Notas e preencha:
+   IMAGENS_BASE_URL: URL real da pasta do servidor, terminando em /.
+   BLING_CLIENT_ID: identificador do aplicativo Bling.
+   BLING_CLIENT_SECRET: segredo do aplicativo Bling.
+   Mantenha BLING_REDIRECT_URI=http://127.0.0.1:8765/callback.
+   Tokens e expiracao sao preenchidos automaticamente na autorizacao.
+
+3. No cadastro do aplicativo Bling, configure o mesmo redirecionamento,
+   acesso a consulta de produtos e "Salvar imagens dos Produtos".
+
+4. Abra AutoFotos.exe. Em Configuracoes avancadas, clique em Autorizar Bling
+   e aprove o acesso no navegador com a conta que vai operar.
+
+5. Escolha o fabricante e a pasta, clique em Verificar imagens e revise.
+   O envio de cada produto exige confirmacao APLICAR.
+
+Mantenha o .env na mesma pasta do AutoFotos.exe, inclusive ao usar atalhos.
+O .env concentra as configuracoes; nao existe um .config separado.
+Os relatorios CSV sao salvos, por padrao, na pasta do executavel.
+E necessario acesso a internet para o servidor de imagens e para o Bling.
+
+O pacote inclui apenas a configuracao de exemplo, sem credenciais ou tokens.
+Depois de configurar, nao compartilhe o seu .env com outras pessoas.
+Para atualizar o programa, substitua somente AutoFotos.exe e preserve o .env.
+
+Os nomes das fotos precisam seguir as regras do catalogo original:
+PR ou RE seguido de numeros e uma posicao (_01, _02 etc.).
+O codigo recebe o sufixo 0001 para formar o SKU do Bling.
+Existe a excecao PR31597 -> RE315970001.
