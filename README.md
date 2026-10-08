@@ -167,9 +167,19 @@ Consulte todas as opções com `main.py --help`.
 
 ## Regras de associação e limites
 
-Os arquivos devem começar com `PR`, `RE` ou `MLB` seguido de números e terminar com
-uma posição, por exemplo `PR8254-PRODUTO_01.jpg`. O código `PR8254` corresponde
-ao SKU `PR82540001`, acrescentando o sufixo `0001`.
+Os arquivos devem começar com `PR`, `RE` ou `MLB` seguido de números. A posição
+pode aparecer no final, por exemplo `PR8254-PRODUTO_01.jpg`. Nomes descritivos sem
+posição, como `PR36740001 - KIT 12 COLA - DE FRENTE.jpg`, também são aceitos:
+recebem posições pela ordem alfabética dos arquivos, depois das posições explícitas.
+Faltas e conflitos na numeração explícita continuam sendo sinalizados.
+
+A consulta tenta primeiro a regra tradicional: `PR8254` corresponde ao SKU
+`PR82540001`, acrescentando `0001`. Se não encontrar um produto ativo, tenta o
+código original do arquivo, por correspondência exata. Assim, arquivos com SKU
+completo, como `PR36740001`, `PR39153000` ou `PR4028201`, podem ser associados sem
+acrescentar outro sufixo. A GUI, o plano e os relatórios usam o SKU encontrado.
+Não há associação aproximada pela descrição; produtos ausentes continuam ignorados
+e duplicidades continuam bloqueadas.
 
 Os códigos `MLB` já representam o SKU completo e não recebem sufixo:
 `MLB5031544400-PRODUTO_01.jpg` corresponde ao SKU `MLB5031544400`.

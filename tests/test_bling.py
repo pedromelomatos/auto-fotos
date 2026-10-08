@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from bling import BlingImagens, BlingSomenteLeitura, ProdutoBling
+from bling import BlingImagens, BlingSomenteLeitura, ErroBling, ProdutoBling
 
 
 class BlingSomenteLeituraTests(unittest.TestCase):
@@ -77,6 +77,32 @@ class BlingSomenteLeituraTests(unittest.TestCase):
 
 
 class BlingImagensTests(unittest.TestCase):
+    def test_recusa_preserva_diagnostico_sem_expor_token_e_sem_repetir_patch(self):
+        cliente = BlingImagens("token-de-teste", intervalo_minimo=0)
+        resposta = Mock(status_code=403, ok=False)
+        resposta.json.return_value = {"error": {
+            "type": "FORBIDDEN",
+            "message": "Acesso negado",
+            "description": "Permissao de alteracao recusada para token-de-teste",
+        }}
+        cliente._sessao.patch = Mock(return_value=resposta)
+        with self.assertRaises(ErroBling) as capturado:
+            cliente.atualizar_imagens_produto(123, ["https://exemplo.test/01.jpg"])
+        mensagem = str(capturado.exception)
+        self.assertIn("HTTP 403", mensagem)
+        self.assertIn("FORBIDDEN", mensagem)
+        self.assertIn("Permissao de alteracao recusada", mensagem)
+        self.assertNotIn("token-de-teste", mensagem)
+        cliente._sessao.patch.assert_called_once()
+
+    def test_recusa_sem_json_ainda_informa_http_403(self):
+        cliente = BlingImagens("token-de-teste", intervalo_minimo=0)
+        resposta = Mock(status_code=403, ok=False)
+        resposta.json.side_effect = ValueError("Resposta HTML")
+        cliente._sessao.patch = Mock(return_value=resposta)
+        with self.assertRaisesRegex(ErroBling, "HTTP 403"):
+            cliente.atualizar_imagens_produto(123, ["https://exemplo.test/01.jpg"])
+
     def test_atualiza_lista_completa_de_imagens_por_patch(self):
         resposta = Mock()
         resposta.status_code = 200

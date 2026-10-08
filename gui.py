@@ -26,6 +26,7 @@ from main import (
     gerar_conferencia_bling,
     gerar_plano_imagens,
     gerar_relatorio_aplicacao,
+    resolver_produtos_bling,
     valor_booleano,
 )
 from oauth_bling import (
@@ -93,11 +94,19 @@ def mensagem_erro_amigavel(erro: Exception) -> str:
             "A autorização do Bling expirou ou não está disponível.\n\n"
             "Abra Configurações avançadas e selecione Renovar token."
         )
-    if "permissao para salvar imagens" in texto.casefold() or "permissão para salvar imagens" in texto.casefold():
+    if (
+        "permissao para salvar imagens" in texto.casefold()
+        or "permissão para salvar imagens" in texto.casefold()
+        or ("HTTP 403" in texto and "imagens" in texto.casefold())
+    ):
         return (
-            "O aplicativo ainda não tem permissão para salvar imagens.\n\n"
-            "Habilite o escopo Salvar imagens dos Produtos no Bling e use "
-            "Configurações avançadas > Autorizar Bling."
+            "O Bling recusou o envio das imagens (HTTP 403).\n\n"
+            "Se o escopo Salvar imagens dos Produtos já está habilitado, "
+            "salve o cadastro do aplicativo no Bling e faça uma nova autorização "
+            "em Configurações avançadas > Autorizar Bling.\n\n"
+            "Se a recusa continuar, confira também as permissões de alteração "
+            "em Produtos e do usuário que autorizou o aplicativo."
+            + (f"\n\n{texto}" if "Detalhe do Bling:" in texto else "")
         )
     if isinstance(erro, PermissionError):
         return (
@@ -1012,10 +1021,9 @@ class AutoFotosGUI:
                 url,
                 verificar_certificado=validar_certificado,
             )
-            gerar_csv(resultado, str(pasta / "imagens_produtos.csv"))
             cliente = BlingSomenteLeitura.do_ambiente()
-            codigos = [produto.codigo_bling for produto in resultado.produtos]
-            encontrados = cliente.buscar_produtos_por_codigos(codigos)
+            resultado, encontrados = resolver_produtos_bling(resultado, cliente)
+            gerar_csv(resultado, str(pasta / "imagens_produtos.csv"))
             gerar_conferencia_bling(
                 resultado,
                 encontrados,

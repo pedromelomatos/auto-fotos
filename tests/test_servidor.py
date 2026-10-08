@@ -1,11 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from servidor import (
     ProdutoImagens,
     analisar_nome_arquivo,
     codigo_bling,
+    coletar_imagens,
     extrair_diretorios,
     extrair_links_imagens,
 )
@@ -47,7 +49,6 @@ class ParserImagemTests(unittest.TestCase):
         for nome in (
             "MLB-PRODUTO_01.jpg",
             "MLB5031544400A-PRODUTO_01.jpg",
-            "MLB5031544400-PRODUTO.jpg",
             "MLB5031544400-PRODUTO_00.jpg",
         ):
             with self.subTest(nome=nome):
@@ -72,13 +73,53 @@ class ParserImagemTests(unittest.TestCase):
         )
         self.assertEqual(primeira.codigo_servidor, segunda.codigo_servidor)
 
-    def test_ignora_nome_sem_posicao(self):
-        self.assertIsNone(
-            analisar_nome_arquivo(
-                "PR8254-DISCO.jpg",
-                "https://exemplo.test/MAKITA/PR8254-DISCO.jpg",
-            )
-        )
+    def test_aceita_nome_descritivo_sem_posicao(self):
+        for nome in (
+            "PR8254-DISCO.jpg",
+            "PR36740001 - KIT 12 COLA DE SILICONE - DE FRENTE.jpg",
+            "PR39153000- ESCADA AGATA 5 DEGRAUS.jpg",
+            "PR4028201 - COLHER DE PEDREIRO - DE PE.jpg",
+            "MLB5031544400-PRODUTO.jpg",
+        ):
+            with self.subTest(nome=nome):
+                imagem = analisar_nome_arquivo(nome, f"https://exemplo.test/{nome}")
+                self.assertIsNotNone(imagem)
+                self.assertTrue(imagem.posicao_automatica)
+
+    def test_nao_aceita_codigo_invalido_ou_posicao_zero_com_fallback(self):
+        for nome in ("PR123A - PRODUTO.jpg", "PR123 - PRODUTO_00.jpg", "SEM SKU.jpg"):
+            with self.subTest(nome=nome):
+                self.assertIsNone(analisar_nome_arquivo(nome, f"https://exemplo.test/{nome}"))
+
+    def test_automaticas_nao_escondem_falta_nas_posicoes_explicitas(self):
+        produto = ProdutoImagens("PR1", "PR10001")
+        for nome in ("PR1-A_03.jpg", "PR1-B.jpg"):
+            produto.adicionar(analisar_nome_arquivo(nome, f"https://exemplo.test/{nome}"))
+        produto.ordenar()
+        self.assertEqual(produto.posicoes, [3, 4])
+        self.assertEqual(produto.posicoes_faltantes, [1, 2])
+        self.assertEqual(produto.status_sequencia, "NUMEROS_FALTANTES")
+
+    def test_coleta_descritivas_em_ordem_estavel_com_urls_codificadas(self):
+        nomes = [
+            "PR98140001 - AVENTAL PVC BRANCO - DE TRÁS.jpg",
+            "PR98140001 - AVENTAL PVC BRANCO.jpg",
+            "PR98140001 - AVENTAL PVC BRANCO_01.jpg",
+        ]
+        resultados = []
+        for ordem in (nomes, list(reversed(nomes))):
+            sessao = Mock()
+            sessao.get.return_value.text = "".join(f'<a href="{nome}">Foto</a>' for nome in ordem)
+            resultado = coletar_imagens("https://exemplo.test/editado/", sessao=sessao,
+                                        verificar_certificado=True)
+            produto = resultado.produtos[0]
+            self.assertEqual(resultado.arquivos_imagem_ignorados, ())
+            self.assertEqual(produto.status_sequencia, "OK")
+            self.assertEqual(produto.posicoes, [1, 2, 3])
+            self.assertTrue(all(" " not in imagem.url for imagem in produto.imagens))
+            self.assertIn("%C3%81", produto.imagens[1].url)
+            resultados.append([(i.arquivo, i.posicao) for i in produto.imagens])
+        self.assertEqual(resultados[0], resultados[1])
 
     def test_detecta_falta_e_conflito(self):
         produto = ProdutoImagens("PR1", "PR10001")

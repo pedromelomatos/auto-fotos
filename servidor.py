@@ -10,7 +10,7 @@ import csv
 import logging
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html import unescape
 from pathlib import PurePosixPath
 from typing import Iterable
@@ -34,6 +34,11 @@ PADRAO_NOME_IMAGEM = re.compile(
     r"(?P<extensao>\.(?:jpe?g|png|webp))$",
     re.IGNORECASE,
 )
+PADRAO_NOME_SEM_POSICAO = re.compile(
+    r"^(?P<codigo>(?:PR|RE|MLB)\d+)(?=[^A-Z0-9]|$).*"
+    r"\.(?:jpe?g|png|webp)$",
+    re.IGNORECASE,
+)
 
 
 class ErroServidorImagens(RuntimeError):
@@ -47,6 +52,7 @@ class ImagemProduto:
     posicao: int
     arquivo: str
     url: str
+    posicao_automatica: bool = False
 
 
 @dataclass(slots=True)
@@ -63,6 +69,21 @@ class ProdutoImagens:
         self.imagens.append(imagem)
 
     def ordenar(self) -> None:
+        # Nomes descritivos nao possuem _01: recebem posicoes estaveis depois
+        # das numeradas, sem mascarar faltas ou conflitos nas posicoes explicitas.
+        proxima = max(
+            (item.posicao for item in self.imagens if not item.posicao_automatica),
+            default=0,
+        ) + 1
+        automaticas = sorted(
+            (item for item in self.imagens if item.posicao_automatica),
+            key=lambda item: (item.arquivo.casefold(), item.url),
+        )
+        posicoes = {item.url: proxima + indice for indice, item in enumerate(automaticas)}
+        self.imagens = [
+            replace(item, posicao=posicoes[item.url]) if item.posicao_automatica else item
+            for item in self.imagens
+        ]
         self.imagens.sort(key=lambda item: (item.posicao, item.arquivo.casefold()))
 
     @property
@@ -127,11 +148,14 @@ def analisar_nome_arquivo(arquivo: str, url: str) -> ImagemProduto | None:
     """Interpreta um nome de imagem; retorna None quando ele nao segue o padrao."""
     nome = unquote(PurePosixPath(arquivo).name)
     correspondencia = PADRAO_NOME_IMAGEM.match(nome)
+    posicao_automatica = correspondencia is None
+    if posicao_automatica:
+        correspondencia = PADRAO_NOME_SEM_POSICAO.match(nome)
     if correspondencia is None:
         return None
 
     codigo = correspondencia.group("codigo").upper()
-    posicao = int(correspondencia.group("posicao"))
+    posicao = 1 if posicao_automatica else int(correspondencia.group("posicao"))
     if posicao < 1:
         return None
 
@@ -141,6 +165,7 @@ def analisar_nome_arquivo(arquivo: str, url: str) -> ImagemProduto | None:
         posicao=posicao,
         arquivo=nome,
         url=url,
+        posicao_automatica=posicao_automatica,
     )
 
 

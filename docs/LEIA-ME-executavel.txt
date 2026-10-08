@@ -29,6 +29,8 @@ Depois de configurar, nao compartilhe o seu .env com outras pessoas.
 Para atualizar o programa, substitua somente AutoFotos.exe e preserve o .env.
 
 Os nomes das fotos precisam seguir as regras do catalogo original:
-PR ou RE seguido de numeros e uma posicao (_01, _02 etc.).
-O codigo recebe o sufixo 0001 para formar o SKU do Bling.
+PR, RE ou MLB seguido de numeros e uma posicao (_01, _02 etc.).
+Codigos PR e RE recebem o sufixo 0001 para formar o SKU do Bling.
+Codigos MLB ja sao o SKU completo e nao recebem sufixo.
+Exemplo: MLB5031544400-PRODUTO_01.jpg -> MLB5031544400.
 Existe a excecao PR31597 -> RE315970001.

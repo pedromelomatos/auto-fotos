@@ -1,11 +1,12 @@
 import argparse
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from bling import BlingImagens, ProdutoBling
 from main import (
     aplicar_imagens_piloto,
     criar_plano_imagens,
+    resolver_produtos_bling,
     validar_configuracao_escrita,
 )
 from servidor import ImagemProduto, ProdutoImagens, ResultadoColeta, coletar_imagens
@@ -57,6 +58,102 @@ class PlanoImagensTests(unittest.TestCase):
         )
         self.assertIn("processamento continuado", linhas[0]["motivo"])
         cliente.obter_produto.assert_called_once_with(123)
+
+
+class ResolucaoProdutosTests(unittest.TestCase):
+    def test_prioriza_regra_tradicional_sem_consulta_adicional(self):
+        produto = produto_com_imagem("PR8254", "PR82540001")
+        resumo = ProdutoBling(123, "PR82540001", "Disco", "A", {})
+        cliente = Mock()
+        cliente.buscar_produtos_por_codigos.return_value = {"PR82540001": [resumo]}
+        resultado, encontrados = resolver_produtos_bling(ResultadoColeta((produto,), 1, ()), cliente)
+        cliente.buscar_produtos_por_codigos.assert_called_once_with(["PR82540001"])
+        self.assertEqual(resultado.produtos[0].codigo_bling, "PR82540001")
+        self.assertEqual(encontrados["PR82540001"], [resumo])
+
+    def test_fallback_somente_para_ausentes_preserva_mlb_e_duplicidades(self):
+        produtos = (
+            produto_com_imagem("PR39153000", "PR391530000001"),
+            produto_com_imagem("PR4028201", "PR40282010001"),
+            produto_com_imagem("MLB123", "MLB123"),
+        )
+        duplicados = [ProdutoBling(i, "PR4028201", "Colher", "A", {}) for i in (1, 2)]
+        cliente = Mock()
+        cliente.buscar_produtos_por_codigos.side_effect = [
+            {p.codigo_bling: [] for p in produtos},
+            {"PR39153000": [], "PR4028201": duplicados},
+        ]
+        resultado, encontrados = resolver_produtos_bling(ResultadoColeta(produtos, 3, ()), cliente)
+        self.assertEqual(cliente.buscar_produtos_por_codigos.call_args_list[1],
+                         call(["PR39153000", "PR4028201"]))
+        linhas = criar_plano_imagens(resultado, encontrados, cliente)
+        self.assertEqual([linha["status_planejado"] for linha in linhas], [
+            "IGNORADO_PRODUTO_NAO_ENCONTRADO", "BLOQUEADO_MULTIPLOS_PRODUTOS_ATIVOS",
+            "IGNORADO_PRODUTO_NAO_ENCONTRADO",
+        ])
+        cliente.obter_produto.assert_not_called()
+
+    def test_duplicidade_na_busca_principal_nao_dispara_fallback(self):
+        produto = produto_com_imagem("PR2", "PR20001")
+        cliente = Mock()
+        cliente.buscar_produtos_por_codigos.return_value = {
+            "PR20001": [ProdutoBling(i, "PR20001", "Produto", "A", {}) for i in (1, 2)],
+        }
+        resultado, encontrados = resolver_produtos_bling(ResultadoColeta((produto,), 1, ()), cliente)
+        cliente.buscar_produtos_por_codigos.assert_called_once()
+        self.assertEqual(criar_plano_imagens(resultado, encontrados, cliente)[0]["status_planejado"],
+                         "BLOQUEADO_MULTIPLOS_PRODUTOS_ATIVOS")
+
+    def test_sku_completo_sem_sufixo_e_usado_no_plano_e_na_aplicacao(self):
+        sessao = Mock()
+        sessao.get.return_value.text = '''
+        <a href="PR36740001 - KIT 12 COLA - DE FRENTE.jpg">Frente</a>
+        <a href="PR36740001 - KIT 12 COLA - DE LADO.jpg">Lado</a>
+        '''
+        coleta = coletar_imagens("https://exemplo.test/editado/", sessao=sessao,
+                                 verificar_certificado=True)
+        resumo = ProdutoBling(123, "PR36740001", "Kit 12 cola", "A", {})
+        cliente = Mock()
+        cliente.buscar_produtos_por_codigos.side_effect = [
+            {"PR367400010001": []}, {"PR36740001": [resumo]},
+        ]
+        resultado, encontrados = resolver_produtos_bling(coleta, cliente)
+        self.assertEqual(cliente.buscar_produtos_por_codigos.call_args_list,
+                         [call(["PR367400010001"]), call(["PR36740001"])])
+        self.assertEqual(coleta.produtos[0].codigo_bling, "PR367400010001")
+        self.assertEqual(resultado.produtos[0].codigo_bling, "PR36740001")
+        self.assertTrue(all(i.codigo_bling == "PR36740001" for i in resultado.produtos[0].imagens))
+        urls = [i.url for i in resultado.produtos[0].imagens]
+        depois = ProdutoBling(123, "PR36740001", "Kit 12 cola", "A", {
+            "midia": {"imagens": {"externas": [{"link": url} for url in urls]}},
+        })
+        cliente.obter_produto.side_effect = [resumo, resumo, depois]
+        plano = criar_plano_imagens(resultado, encontrados, cliente)
+        self.assertTrue(all(linha["status_planejado"] == "ADICIONAR" for linha in plano))
+        self.assertTrue(all(linha["codigo_bling"] == "PR36740001" for linha in plano))
+        aplicacao = aplicar_imagens_piloto(resultado, encontrados, cliente, "PR36740001")
+        self.assertEqual(aplicacao.status, "APLICADO_E_VERIFICADO")
+        cliente.atualizar_imagens_produto.assert_called_once_with(123, urls)
+
+    def test_agrupa_nomes_abreviados_e_completos_do_mesmo_sku(self):
+        sessao = Mock()
+        sessao.get.return_value.text = '''
+        <a href="PR3674 - COLA.jpg">Antiga</a>
+        <a href="PR36740001 - COLA - DE FRENTE.jpg">Nova</a>
+        '''
+        coleta = coletar_imagens("https://exemplo.test/editado/", sessao=sessao,
+                                 verificar_certificado=True)
+        cliente = Mock()
+        cliente.buscar_produtos_por_codigos.return_value = {
+            "PR36740001": [ProdutoBling(123, "PR36740001", "Cola", "A", {})],
+            "PR367400010001": [],
+        }
+        resultado, _ = resolver_produtos_bling(coleta, cliente)
+        cliente.buscar_produtos_por_codigos.assert_called_once()
+        self.assertEqual(resultado.total_produtos, 1)
+        self.assertEqual(resultado.total_imagens, 2)
+        self.assertEqual(resultado.produtos[0].status_sequencia, "OK")
+        self.assertEqual(resultado.produtos[0].posicoes, [1, 2])
 
 
 class AplicacaoImagensTests(unittest.TestCase):

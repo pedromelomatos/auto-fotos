@@ -227,6 +227,26 @@ class BlingSomenteLeitura:
             params=[("criterio", 2), ("limite", 1)],
         )
 
+    def _detalhe_erro_api(self, resposta: requests.Response) -> str:
+        """Extrai somente a mensagem de erro, sem expor o token usado na chamada."""
+        try:
+            conteudo = resposta.json()
+        except ValueError:
+            return ""
+        erro = conteudo.get("error") if isinstance(conteudo, dict) else None
+        if not isinstance(erro, dict):
+            return ""
+        partes: list[str] = []
+        for campo in ("type", "message", "description"):
+            valor = erro.get(campo)
+            if isinstance(valor, str) and valor.strip() and valor.strip() not in partes:
+                partes.append(valor.strip())
+        detalhe = " | ".join(partes)
+        token = self._sessao.headers.get("Authorization", "").removeprefix("Bearer ")
+        if token:
+            detalhe = detalhe.replace(token, "[token omitido]")
+        return detalhe[:1000]
+
     def buscar_produto_por_codigo(self, codigo: str) -> ProdutoBling | None:
         encontrados = self.buscar_produtos_por_codigos([codigo]).get(
             codigo.strip().upper(),
@@ -278,12 +298,14 @@ class BlingImagens(BlingSomenteLeitura):
         if resposta.status_code == 401:
             raise ErroBling("Token do Bling ausente, invalido ou expirado.")
         if resposta.status_code == 403:
+            detalhe = self._detalhe_erro_api(resposta)
             raise ErroBling(
-                "O aplicativo nao possui permissao para salvar imagens de produtos."
+                "O Bling recusou o envio das imagens (HTTP 403)."
+                + (f"\nDetalhe do Bling: {detalhe}" if detalhe else "")
             )
-        if resposta.status_code == 429:
+        if resposta.status_code == 429: #se a resposta.status for igual 429:
             raise ErroBling("Limite de requisicoes do Bling atingido.")
-        if not resposta.ok:
+        if not resposta.ok: # se a resposta não estiver ok
             raise ErroBling(
                 "O Bling recusou a atualizacao de imagens com HTTP "
                 f"{resposta.status_code}."

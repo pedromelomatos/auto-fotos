@@ -60,6 +60,16 @@ class GuiHelpersTests(unittest.TestCase):
         self.assertIn("Configurações avançadas", mensagem)
         self.assertIn("Renovar token", mensagem)
 
+    def test_recusa_de_imagens_orienta_reautorizacao_e_preserva_detalhe(self):
+        mensagem = mensagem_erro_amigavel(RuntimeError(
+            "O Bling recusou o envio das imagens (HTTP 403).\n"
+            "Detalhe do Bling: FORBIDDEN | Permissao de alteracao recusada"
+        ))
+        self.assertIn("salve o cadastro", mensagem)
+        self.assertIn("Autorizar Bling", mensagem)
+        self.assertIn("Permissao de alteracao recusada", mensagem)
+        self.assertNotIn("ainda não tem permissão", mensagem)
+
     def test_orienta_fechar_relatorio_aberto(self):
         mensagem = mensagem_erro_amigavel(PermissionError("arquivo ocupado"))
 

@@ -8,13 +8,19 @@ import logging
 import os
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
 from bling import BlingImagens, BlingSomenteLeitura, ErroBling, ProdutoBling
-from servidor import ErroServidorImagens, ResultadoColeta, coletar_imagens, gerar_csv
+from servidor import (
+    ErroServidorImagens,
+    ProdutoImagens,
+    ResultadoColeta,
+    coletar_imagens,
+    gerar_csv,
+)
 
 
 URL_PADRAO = "https://servidor.exemplo/FABRICANTE/"
@@ -160,6 +166,45 @@ def gerar_conferencia_bling(
                     "status_sequencia_imagens": produto.status_sequencia,
                 }
             )
+
+
+def resolver_produtos_bling(
+    resultado: ResultadoColeta,
+    cliente: BlingSomenteLeitura,
+) -> tuple[ResultadoColeta, dict[str, list[ProdutoBling]]]:
+    """Tenta a regra tradicional e depois o codigo exato presente no arquivo."""
+    codigos = sorted({produto.codigo_bling for produto in resultado.produtos})
+    encontrados = cliente.buscar_produtos_por_codigos(codigos)
+    alternativas = sorted({
+        produto.codigo_servidor
+        for produto in resultado.produtos
+        if not encontrados.get(produto.codigo_bling)
+        and produto.codigo_servidor != produto.codigo_bling
+    })
+    # Reutiliza os resultados da primeira consulta quando o codigo original
+    # tambem era candidato de outro grupo. Nunca troca uma correspondencia existente.
+    nao_consultados = [codigo for codigo in alternativas if codigo not in encontrados]
+    if nao_consultados:
+        encontrados.update(cliente.buscar_produtos_por_codigos(nao_consultados))
+
+    agrupados: dict[str, ProdutoImagens] = {}
+    for produto in resultado.produtos:
+        codigo = produto.codigo_bling
+        if not encontrados.get(codigo) and encontrados.get(produto.codigo_servidor):
+            codigo = produto.codigo_servidor
+        destino = agrupados.setdefault(
+            codigo, ProdutoImagens(produto.codigo_servidor, codigo),
+        )
+        urls = {imagem.url for imagem in destino.imagens}
+        for imagem in produto.imagens:
+            if imagem.url not in urls:
+                # Mantem o codigo de origem de cada imagem para auditoria, inclusive
+                # quando nomes abreviados e completos apontam para o mesmo SKU.
+                destino.imagens.append(replace(imagem, codigo_bling=codigo))
+                urls.add(imagem.url)
+        destino.ordenar()
+
+    return replace(resultado, produtos=tuple(agrupados.values())), encontrados
 
 
 def normalizar_url_imagem(url: str) -> str:
@@ -479,8 +524,9 @@ def executar(argumentos: argparse.Namespace) -> int:
             cliente = BlingImagens.do_ambiente()
         else:
             cliente = BlingSomenteLeitura.do_ambiente()
+        resultado, encontrados = resolver_produtos_bling(resultado, cliente)
+        gerar_csv(resultado, argumentos.saida)
         codigos = [produto.codigo_bling for produto in resultado.produtos]
-        encontrados = cliente.buscar_produtos_por_codigos(codigos)
         total_com_correspondencia = sum(
             1 for codigo in codigos if encontrados.get(codigo, [])
         )
